@@ -1,5 +1,5 @@
 """
-Auto-Bump Management System — FastAPI REST API
+Auto-Bump Management System FastAPI REST API
 
 Serves the dashboard and provides API endpoints for managing accounts,
 channels, bump logs, and the scheduler.
@@ -7,6 +7,7 @@ channels, bump logs, and the scheduler.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -91,8 +92,8 @@ def create_app(db: Database, scheduler: BumpScheduler, bumper: BumpManager) -> F
             channel_ids=body.channel_ids,
         )
 
-        # Connect the account immediately
-        bumper.connect_account(account_id, body.token, body.name)
+        # Connect the account immediately in a separate thread
+        await asyncio.to_thread(bumper.connect_account, account_id, body.token, body.name)
 
         account = await db.get_account(account_id)
         return account_to_response(account)
@@ -100,8 +101,8 @@ def create_app(db: Database, scheduler: BumpScheduler, bumper: BumpManager) -> F
     @app.delete("/api/accounts/{account_id}")
     async def remove_account(account_id: int):
         """Remove an account."""
-        # Disconnect first
-        bumper.disconnect_account(account_id)
+        # Disconnect first in a separate thread to prevent blocking
+        await asyncio.to_thread(bumper.disconnect_account, account_id)
 
         deleted = await db.remove_account(account_id)
         if not deleted:
@@ -120,12 +121,12 @@ def create_app(db: Database, scheduler: BumpScheduler, bumper: BumpManager) -> F
         if not updated:
             raise HTTPException(status_code=404, detail="Account not found")
 
-        # Handle enable/disable connection
+        # Handle enable/disable connection in a separate thread
         account = await db.get_account(account_id)
         if body.enabled is True:
-            bumper.connect_account(account_id, account["token"], account["name"])
+            await asyncio.to_thread(bumper.connect_account, account_id, account["token"], account["name"])
         elif body.enabled is False:
-            bumper.disconnect_account(account_id)
+            await asyncio.to_thread(bumper.disconnect_account, account_id)
 
         return account_to_response(account)
 

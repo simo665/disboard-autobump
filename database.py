@@ -1,5 +1,5 @@
 """
-Auto-Bump Management System — Database Module
+Auto-Bump Management System Database Module
 
 Async SQLite database layer using aiosqlite.
 All data operations are centralized here.
@@ -99,11 +99,12 @@ class Database:
 
         if channel_ids:
             for ch_id in channel_ids:
-                # Ensure channel row exists
-                await self._db.execute(
-                    "INSERT OR IGNORE INTO channels (channel_id) VALUES (?)",
-                    (ch_id,),
-                )
+                # Ensure channel row exists, set next_bump to 30s in the future if new
+                await self._db.execute("""
+                    INSERT INTO channels (channel_id, next_bump)
+                    VALUES (?, ?)
+                    ON CONFLICT(channel_id) DO NOTHING
+                """, (ch_id, now + 30))
                 await self._db.execute(
                     "INSERT OR IGNORE INTO account_channels (account_id, channel_id) VALUES (?, ?)",
                     (account_id, ch_id),
@@ -118,6 +119,11 @@ class Database:
         cursor = await self._db.execute(
             "DELETE FROM accounts WHERE id = ?", (account_id,)
         )
+        # Clean up orphaned channels
+        await self._db.execute("""
+            DELETE FROM channels
+            WHERE channel_id NOT IN (SELECT DISTINCT channel_id FROM account_channels)
+        """)
         await self._db.commit()
         deleted = cursor.rowcount > 0
         if deleted:
@@ -164,15 +170,22 @@ class Database:
             await self._db.execute(
                 "DELETE FROM account_channels WHERE account_id = ?", (account_id,)
             )
+            now = time.time()
             for ch_id in channel_ids:
-                await self._db.execute(
-                    "INSERT OR IGNORE INTO channels (channel_id) VALUES (?)",
-                    (ch_id,),
-                )
+                await self._db.execute("""
+                    INSERT INTO channels (channel_id, next_bump)
+                    VALUES (?, ?)
+                    ON CONFLICT(channel_id) DO NOTHING
+                """, (ch_id, now + 30))
                 await self._db.execute(
                     "INSERT OR IGNORE INTO account_channels (account_id, channel_id) VALUES (?, ?)",
                     (account_id, ch_id),
                 )
+            # Clean up orphaned channels
+            await self._db.execute("""
+                DELETE FROM channels
+                WHERE channel_id NOT IN (SELECT DISTINCT channel_id FROM account_channels)
+            """)
 
         await self._db.commit()
         return True
@@ -308,7 +321,7 @@ class Database:
         self,
         channel_id: str,
         account_id: Optional[int],
-        success: bool,
+        success: int,
         reason: Optional[str] = None,
     ):
         """Log a bump attempt."""

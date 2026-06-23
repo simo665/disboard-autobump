@@ -1,5 +1,5 @@
 """
-Auto-Bump Management System — Data Models
+Auto-Bump Management System Data Models
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ class BumpLogResponse(BaseModel):
     account_id: Optional[int]
     account_name: str
     timestamp: float
-    success: bool
+    success: int  # 0 = failure, 1 = success, 2 = pending delay
     reason: Optional[str]
 
 

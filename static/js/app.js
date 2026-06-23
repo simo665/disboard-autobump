@@ -1,5 +1,5 @@
 /**
- * Auto-Bump Dashboard — JavaScript Application
+ * Auto-Bump Dashboard JavaScript Application
  * 
  * Manages all dashboard state, API communication, and UI updates.
  */
@@ -9,6 +9,8 @@ class DashboardApp {
         this.refreshInterval = null;
         this.countdownInterval = null;
         this.channels = [];
+        this.accounts = [];
+        this.pendingChannels = {};  // channel_id -> estimated_bump_timestamp
         this.init();
     }
 
@@ -155,6 +157,7 @@ class DashboardApp {
 
     async fetchAccounts() {
         const accounts = await this.api('GET', '/accounts');
+        this.accounts = accounts;
         this.renderAccounts(accounts);
     }
 
@@ -201,6 +204,13 @@ class DashboardApp {
                                        onchange="app.toggleAccount(${acc.id}, this.checked)">
                                 <span class="toggle-slider"></span>
                             </label>
+                            <button class="btn-icon" title="Edit account"
+                                    onclick="app.openEditModal(${acc.id})">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                                    <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                                </svg>
+                            </button>
                             <button class="btn-icon btn-danger" title="Remove account"
                                     onclick="app.removeAccount(${acc.id}, '${this.escapeHtml(acc.name || `Account ${acc.id}`)}')">
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -271,33 +281,54 @@ class DashboardApp {
             const nextBump = ch.next_bump > 0
                 ? this.formatAbsoluteTime(ch.next_bump * 1000)
                 : '—';
-            const countdown = ch.next_bump > 0
-                ? this.formatCountdown(ch.next_bump)
-                : '—';
-            const countdownClass = this.getCountdownClass(ch.next_bump);
+
+            // Check if this channel is pending (waiting through human delay)
+            const pendingUntil = this.pendingChannels[ch.channel_id];
+            let countdownHtml;
+            if (pendingUntil) {
+                const pendingCountdown = this.formatCountdown(pendingUntil);
+                countdownHtml = `<span class="countdown pending" data-next="${ch.next_bump}" data-pending="${pendingUntil}">Pending bumping in ${pendingCountdown}</span>`;
+            } else {
+                const countdown = ch.next_bump > 0
+                    ? this.formatCountdown(ch.next_bump)
+                    : '—';
+                const countdownClass = this.getCountdownClass(ch.next_bump);
+                countdownHtml = `<span class="countdown ${countdownClass}" data-next="${ch.next_bump}">` +
+                    `${countdown}</span>`;
+            }
 
             return `
                 <tr data-channel-id="${ch.channel_id}">
                     <td><span class="channel-tag">${ch.channel_id}</span></td>
                     <td>${lastBump}</td>
                     <td>${nextBump}</td>
-                    <td><span class="countdown ${countdownClass}" data-next="${ch.next_bump}">${countdown}</span></td>
+                    <td>${countdownHtml}</td>
                     <td>${ch.assigned_accounts}</td>
                 </tr>`;
         }).join('');
     }
 
     updateCountdowns() {
-        document.querySelectorAll('.countdown[data-next]').forEach(el => {
+        document.querySelectorAll('.countdown').forEach(el => {
+            const pendingUntil = parseFloat(el.dataset.pending);
+            if (pendingUntil > 0) {
+                const countdown = this.formatCountdown(pendingUntil);
+                const now = Date.now() / 1000;
+                if (pendingUntil <= now) {
+                    el.textContent = 'Bumping now…';
+                    el.className = 'countdown bumping';
+                } else {
+                    el.textContent = `Pending bumping in ${countdown}`;
+                    el.className = 'countdown pending';
+                }
+                return;
+            }
             const nextBump = parseFloat(el.dataset.next);
             if (nextBump > 0) {
                 el.textContent = this.formatCountdown(nextBump);
                 el.className = `countdown ${this.getCountdownClass(nextBump)}`;
             }
         });
-
-        // Also update the stats next-bump
-        // (refreshed on full refresh, but keep countdown live)
     }
 
     getCountdownClass(nextBumpTimestamp) {
@@ -333,23 +364,34 @@ class DashboardApp {
         }
 
         this.elLogFeed.innerHTML = logs.map(log => {
-            const icon = log.success ? '✅' : '❌';
-            const iconClass = log.success ? 'success' : 'failure';
-            const action = log.success ? 'Bumped' : 'Failed to bump';
+            let icon, iconClass, action, reasonText;
+
+            if (log.success === 2) {
+                icon = '⏱️';
+                iconClass = 'pending';
+                action = `Scheduled bump (delay) for channel <span class="log-channel">${log.channel_id}</span>`;
+                reasonText = log.reason
+                    ? `<div class="log-reason pending">↳ ${this.escapeHtml(log.reason)}</div>`
+                    : '';
+            } else {
+                icon = log.success ? '✅' : '❌';
+                iconClass = log.success ? 'success' : 'failure';
+                const actionWord = log.success ? 'Bumped' : 'Failed to bump';
+                action = `${actionWord} channel <span class="log-channel">${log.channel_id}</span> with <span class="log-account">${this.escapeHtml(log.account_name)}</span>`;
+                reasonText = log.reason
+                    ? `<div class="log-reason">↳ ${this.escapeHtml(log.reason)}</div>`
+                    : '';
+            }
             const time = this.formatRelativeTime(log.timestamp * 1000);
-            const reason = log.reason
-                ? `<div class="log-reason">↳ ${this.escapeHtml(log.reason)}</div>`
-                : '';
 
             return `
                 <div class="log-entry">
                     <div class="log-icon ${iconClass}">${icon}</div>
                     <div class="log-content">
                         <div class="log-message">
-                            ${action} channel <span class="log-channel">${log.channel_id}</span>
-                            with <span class="log-account">${this.escapeHtml(log.account_name)}</span>
+                            ${action}
                         </div>
-                        ${reason}
+                        ${reasonText}
                         <div class="log-meta">
                             <span>${time}</span>
                         </div>
@@ -362,6 +404,7 @@ class DashboardApp {
 
     async fetchSchedulerStatus() {
         const status = await this.api('GET', '/scheduler/status');
+        this.pendingChannels = status.pending_channels || {};
         this.renderSchedulerStatus(status);
     }
 
@@ -392,7 +435,7 @@ class DashboardApp {
         try {
             const result = await this.api('POST', '/scheduler/toggle');
             this.toast(result.running ? 'Scheduler started' : 'Scheduler stopped',
-                       result.running ? 'success' : 'info');
+                result.running ? 'success' : 'info');
             await this.fetchSchedulerStatus();
         } catch (err) {
             this.toast(`Failed to toggle scheduler: ${err.message}`, 'error');
@@ -402,14 +445,10 @@ class DashboardApp {
     // ── Account Actions ───────────────────────────────────────────
 
     async addAccount() {
-        const token = this.elInputToken.value.trim();
+        const accountId = document.getElementById('input-account-id').value;
         const name = this.elInputName.value.trim();
         const channelsRaw = this.elInputChannels.value.trim();
 
-        if (!token) {
-            this.toast('Token is required', 'error');
-            return;
-        }
         if (!channelsRaw) {
             this.toast('At least one channel ID is required', 'error');
             return;
@@ -421,14 +460,33 @@ class DashboardApp {
             .map(s => s.trim())
             .filter(s => s.length > 0);
 
-        try {
-            await this.api('POST', '/accounts', { token, name, channel_ids: channelIds });
-            this.toast(`Account "${name || 'New Account'}" added successfully`, 'success');
-            this.closeModal();
-            this.elForm.reset();
-            await this.refresh();
-        } catch (err) {
-            this.toast(`Failed to add account: ${err.message}`, 'error');
+        if (accountId) {
+            // Edit mode
+            try {
+                await this.api('PATCH', `/accounts/${accountId}`, { name, channel_ids: channelIds });
+                this.toast(`Account "${name || 'Account'}" updated successfully`, 'success');
+                this.closeModal();
+                this.elForm.reset();
+                await this.refresh();
+            } catch (err) {
+                this.toast(`Failed to update account: ${err.message}`, 'error');
+            }
+        } else {
+            // Add mode
+            const token = this.elInputToken.value.trim();
+            if (!token) {
+                this.toast('Token is required', 'error');
+                return;
+            }
+            try {
+                await this.api('POST', '/accounts', { token, name, channel_ids: channelIds });
+                this.toast(`Account "${name || 'New Account'}" added successfully`, 'success');
+                this.closeModal();
+                this.elForm.reset();
+                await this.refresh();
+            } catch (err) {
+                this.toast(`Failed to add account: ${err.message}`, 'error');
+            }
         }
     }
 
@@ -457,6 +515,34 @@ class DashboardApp {
     // ── Modal ─────────────────────────────────────────────────────
 
     openModal() {
+        // Reset modal layout for Add Account mode
+        document.getElementById('modal-title').textContent = 'Add Account';
+        document.getElementById('input-account-id').value = '';
+        document.getElementById('input-name').value = '';
+        document.getElementById('group-token').style.display = 'block';
+        document.getElementById('input-token').setAttribute('required', 'required');
+        document.getElementById('input-token').value = '';
+        document.getElementById('input-channels').value = '';
+        document.getElementById('btn-submit-text').textContent = 'Add Account';
+
+        this.elModalOverlay.classList.add('visible');
+        this.elInputName.focus();
+    }
+
+    openEditModal(accountId) {
+        const acc = this.accounts.find(a => a.id === accountId);
+        if (!acc) return;
+
+        // Configure modal layout for Edit Account mode
+        document.getElementById('modal-title').textContent = 'Edit Account';
+        document.getElementById('input-account-id').value = accountId;
+        document.getElementById('input-name').value = acc.name;
+        document.getElementById('group-token').style.display = 'none';
+        document.getElementById('input-token').removeAttribute('required');
+        document.getElementById('input-token').value = '';
+        document.getElementById('input-channels').value = acc.channel_ids.join(', ');
+        document.getElementById('btn-submit-text').textContent = 'Save Changes';
+
         this.elModalOverlay.classList.add('visible');
         this.elInputName.focus();
     }
@@ -540,3 +626,4 @@ class DashboardApp {
 
 // ── Bootstrap ─────────────────────────────────────────────────────
 const app = new DashboardApp();
+window.app = app;

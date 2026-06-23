@@ -1,5 +1,5 @@
 """
-Auto-Bump Management System — Bump Execution Engine
+Auto-Bump Management System Bump Execution Engine
 
 Manages Discord self-bot client instances and executes bump commands.
 Each account runs its own discord.Client in a dedicated thread with its own event loop.
@@ -102,7 +102,7 @@ class AccountClient:
             self._error = str(e)
             self._connected = False
             self._ready.set()  # Unblock waiters
-            logger.error("❌ %s: Client crashed — %s", self.name, e)
+            logger.error("❌ %s: Client crashed %s", self.name, e)
         finally:
             self._loop.close()
 
@@ -135,11 +135,11 @@ class AccountClient:
                 return BumpResult(success=True)
             else:
                 return BumpResult(
-                    success=False, error="Bump failed — channel still on cooldown"
+                    success=False, error="Bump failed channel still on cooldown"
                 )
 
         except Exception as e:
-            logger.error("❗ %s: Bump error in channel %d — %s", self.name, channel_id, e)
+            logger.error("❗ %s: Bump error in channel %d %s", self.name, channel_id, e)
             return BumpResult(success=False, error=str(e))
 
     def execute_bump(self, channel_id: int) -> BumpResult:
@@ -257,12 +257,15 @@ class BumpManager:
             if account["enabled"]:
                 enabled_ids.add(account["id"])
                 if not self.is_connected(account["id"]):
-                    self.connect_account(
-                        account["id"], account["token"], account["name"]
+                    await asyncio.to_thread(
+                        self.connect_account,
+                        account["id"],
+                        account["token"],
+                        account["name"],
                     )
             else:
                 if self.is_connected(account["id"]):
-                    self.disconnect_account(account["id"])
+                    await asyncio.to_thread(self.disconnect_account, account["id"])
 
         # Disconnect accounts no longer in the database
         with self._lock:
@@ -270,4 +273,4 @@ class BumpManager:
                 aid for aid in self._clients if aid not in enabled_ids
             ]
         for aid in stale:
-            self.disconnect_account(aid)
+            await asyncio.to_thread(self.disconnect_account, aid)

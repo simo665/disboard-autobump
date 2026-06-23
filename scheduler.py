@@ -1,5 +1,5 @@
 """
-Auto-Bump Management System — Scheduler
+Auto-Bump Management System Scheduler
 
 Continuously monitors channels and dispatches bumps with human-like delays.
 Runs as an async background task alongside the FastAPI server.
@@ -45,7 +45,7 @@ class BumpScheduler:
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._started_at: float = 0
-        self._active_channels: set[str] = set()  # channels currently being bumped
+        self._active_channels: dict[str, float] = {}  # channel_id -> estimated bump time
 
     @property
     def is_running(self) -> bool:
@@ -112,12 +112,21 @@ class BumpScheduler:
         if channel_id in self._active_channels:
             return
 
-        self._active_channels.add(channel_id)
+        # ── Human-like delay ──────────────────────────────────
+        delay = random.randint(HUMAN_DELAY_MIN, HUMAN_DELAY_MAX)
+        estimated_bump_at = time.time() + delay
+        self._active_channels[channel_id] = estimated_bump_at
         try:
-            # ── Human-like delay ──────────────────────────────────
-            delay = random.randint(HUMAN_DELAY_MIN, HUMAN_DELAY_MAX)
+            # Record a log entry in database that the delay has started
+            await self.db.record_bump(
+                channel_id=channel_id,
+                account_id=None,
+                success=2,
+                reason=f"Waiting {delay // 60}m {delay % 60}s before bumping"
+            )
+
             logger.info(
-                "⏱️  Channel %s is due — waiting %d seconds (%.1f min) before bumping",
+                "⏱️  Channel %s is due waiting %d seconds (%.1f min) before bumping",
                 channel_id, delay, delay / 60,
             )
             await asyncio.sleep(delay)
@@ -155,8 +164,11 @@ class BumpScheduler:
 
                 # Ensure account is connected
                 if not self.bumper.is_connected(account_id):
-                    self.bumper.connect_account(
-                        account_id, account["token"], account_name
+                    await asyncio.to_thread(
+                        self.bumper.connect_account,
+                        account_id,
+                        account["token"],
+                        account_name,
                     )
                     # Brief wait for connection
                     await asyncio.sleep(2)
@@ -175,7 +187,7 @@ class BumpScheduler:
                     await self.db.clear_account_error(account_id)
 
                     logger.info(
-                        "✅ Channel %s: Bumped by '%s' — next bump at +2h",
+                        "✅ Channel %s: Bumped by '%s' next bump at +2h",
                         channel_id, account_name,
                     )
                     bumped = True
@@ -186,7 +198,7 @@ class BumpScheduler:
                     )
                     await self.db.set_account_error(account_id, result.error)
                     logger.warning(
-                        "❌ Channel %s: Bump failed with '%s' — %s",
+                        "❌ Channel %s: Bump failed with '%s' %s",
                         channel_id, account_name, result.error,
                     )
                     # Small delay before trying next account
@@ -207,7 +219,13 @@ class BumpScheduler:
                 "Error processing channel %s: %s", channel_id, e, exc_info=True
             )
         finally:
-            self._active_channels.discard(channel_id)
+            self._active_channels.pop(channel_id, None)
+
+    def get_pending_channels(self) -> dict[str, float]:
+        """Get channels currently waiting through their human-like delay.
+        Returns {channel_id: estimated_bump_timestamp}.
+        """
+        return dict(self._active_channels)
 
     async def get_status(self) -> dict:
         """Get scheduler status info."""
@@ -216,4 +234,5 @@ class BumpScheduler:
             "running": self._running,
             "uptime": self.uptime,
             "channels_monitored": len(channels),
+            "pending_channels": self.get_pending_channels(),
         }

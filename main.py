@@ -1,5 +1,5 @@
 """
-Auto-Bump Management System — Entry Point
+Auto-Bump Management System Entry Point
 
 Initializes the database, bump manager, scheduler, and starts the
 FastAPI server with uvicorn.

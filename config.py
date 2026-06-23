@@ -1,5 +1,5 @@
 """
-Auto-Bump Management System — Configuration
+Auto-Bump Management System Configuration
 """
 
 import os
