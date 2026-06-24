@@ -31,3 +31,6 @@ SCHEDULER_CHECK_INTERVAL = 30       # Seconds between scheduler ticks
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_FORMAT = "%(asctime)s │ %(levelname)-7s │ %(name)-12s │ %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+LOG_FILE = BASE_DIR / "autobump.log"
+LOG_MAX_BYTES = 5 * 1024 * 1024  # 5 MB limit per log file
+LOG_BACKUP_COUNT = 3             # Keep up to 3 backup log files

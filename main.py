@@ -9,12 +9,22 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from logging.handlers import RotatingFileHandler
 import signal
 import sys
 import uvicorn
 from contextlib import asynccontextmanager
 
-from config import API_HOST, API_PORT, LOG_LEVEL, LOG_FORMAT, LOG_DATE_FORMAT
+from config import (
+    API_HOST,
+    API_PORT,
+    LOG_LEVEL,
+    LOG_FORMAT,
+    LOG_DATE_FORMAT,
+    LOG_FILE,
+    LOG_MAX_BYTES,
+    LOG_BACKUP_COUNT,
+)
 from database import Database
 from bumper import BumpManager
 from scheduler import BumpScheduler
@@ -25,11 +35,27 @@ from api import create_app
 
 def setup_logging():
     """Configure the logging system."""
-    logging.basicConfig(
-        level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
-        format=LOG_FORMAT,
-        datefmt=LOG_DATE_FORMAT,
+    level = getattr(logging, LOG_LEVEL.upper(), logging.INFO)
+    
+    # Create console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT))
+    
+    # Create rotating file handler
+    file_handler = RotatingFileHandler(
+        LOG_FILE,
+        maxBytes=LOG_MAX_BYTES,
+        backupCount=LOG_BACKUP_COUNT,
+        encoding="utf-8",
     )
+    file_handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT))
+    
+    # Configure root logger
+    logging.basicConfig(
+        level=level,
+        handlers=[console_handler, file_handler]
+    )
+    
     # Suppress noisy discord.py internals
     logging.getLogger("discord").setLevel(logging.WARNING)
     logging.getLogger("discord.http").setLevel(logging.WARNING)

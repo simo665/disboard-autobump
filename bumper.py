@@ -186,14 +186,14 @@ class BumpManager:
         self._clients: dict[int, AccountClient] = {}
         self._lock = threading.Lock()
 
-    def connect_account(self, account_id: int, token: str, name: str = ""):
-        """Start a Discord client for an account."""
+    def connect_account(self, account_id: int, token: str, name: str = "") -> Optional[str]:
+        """Start a Discord client for an account. Returns error string if failed, else None."""
         with self._lock:
             if account_id in self._clients:
                 existing = self._clients[account_id]
                 if existing.is_connected:
                     logger.info("Account %d already connected", account_id)
-                    return
+                    return None
                 # Clean up stale client
                 existing.stop()
 
@@ -205,6 +205,8 @@ class BumpManager:
                 logger.error(
                     "Failed to connect account %d: %s", account_id, client.error
                 )
+                return client.error
+            return None
 
     def disconnect_account(self, account_id: int):
         """Stop and remove a client."""
@@ -257,12 +259,16 @@ class BumpManager:
             if account["enabled"]:
                 enabled_ids.add(account["id"])
                 if not self.is_connected(account["id"]):
-                    await asyncio.to_thread(
+                    err = await asyncio.to_thread(
                         self.connect_account,
                         account["id"],
                         account["token"],
                         account["name"],
                     )
+                    if err:
+                        await db.set_account_error(account["id"], err)
+                    else:
+                        await db.clear_account_error(account["id"])
             else:
                 if self.is_connected(account["id"]):
                     await asyncio.to_thread(self.disconnect_account, account["id"])

@@ -301,7 +301,11 @@ class Database:
         - Assigned to the channel
         - Enabled
         - Not on cooldown (last_bump older than ACCOUNT_COOLDOWN)
-        - No active error
+
+        Note: accounts with error_status are NOT excluded here.
+        The scheduler handles reconnection attempts and clears errors
+        on success. Excluding them permanently caused an infinite
+        "no eligible accounts" loop.
         """
         cutoff = time.time() - ACCOUNT_COOLDOWN
         rows = await self._db.execute_fetchall("""
@@ -311,7 +315,6 @@ class Database:
             WHERE ac.channel_id = ?
               AND a.enabled = 1
               AND a.last_bump <= ?
-              AND a.error_status IS NULL
         """, (channel_id, cutoff))
         return [dict(row) for row in rows]
 
@@ -328,7 +331,7 @@ class Database:
         now = time.time()
         await self._db.execute(
             "INSERT INTO bump_logs (channel_id, account_id, timestamp, success, reason) VALUES (?, ?, ?, ?, ?)",
-            (channel_id, account_id, now, 1 if success else 0, reason),
+            (channel_id, account_id, now, int(success), reason),
         )
         await self._db.commit()
 

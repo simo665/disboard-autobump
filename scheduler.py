@@ -164,12 +164,24 @@ class BumpScheduler:
 
                 # Ensure account is connected
                 if not self.bumper.is_connected(account_id):
-                    await asyncio.to_thread(
+                    conn_err = await asyncio.to_thread(
                         self.bumper.connect_account,
                         account_id,
                         account["token"],
                         account_name,
                     )
+                    if conn_err:
+                        await self.db.set_account_error(account_id, conn_err)
+                        await self.db.record_bump(
+                            channel_id, account_id, success=False, reason=f"Connection failed: {conn_err}"
+                        )
+                        logger.warning(
+                            "❌ Channel %s: Connection failed for '%s' (%s)",
+                            channel_id, account_name, conn_err,
+                        )
+                        continue
+                    else:
+                        await self.db.clear_account_error(account_id)
                     # Brief wait for connection
                     await asyncio.sleep(2)
 
